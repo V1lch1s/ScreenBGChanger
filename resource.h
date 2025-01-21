@@ -1,0 +1,1 @@
+#define IDI_MYICON 101 // Definición del i8dentificador del ícono
