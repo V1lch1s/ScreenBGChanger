@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "fileselector.h": "c",
+        "pickdir.h": "c"
+    }
+}

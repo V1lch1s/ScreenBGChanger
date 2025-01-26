@@ -1,13 +1,15 @@
 // Agregamos el ícono: windres resources.rc -o resources.o
-// Compilación: gcc BgChanger.c resources.o -o BgChanger.exe -mwindows -encode utf8
+// Compilación: gcc BgChanger.c pickDir.c cleanNclose.c resources.o -o BgChanger.exe -mwindows
 
 //#include <unistd.h> // sleep(segundos) 
-#include <windows.h>  // Sleep(milisegundos)
-#include <tlhelp32.h>
-#include <stdio.h>
+#include <windows.h>  // Funciones del Sistema Operativo (Windows API). Ej.: Sleep(milisegundos)
+#include <tlhelp32.h>  // Tool Help 32. Para obtener información sobre procesos en ejecución (saber si se está ejecutando un proceso).
+#include <stdio.h>  // Librería estándar de entrada y salida. Operaciones básicas de archivo y consola.
+#include <commdlg.h>  // Maneja diálogos comunes de Windows. GetOpenFileName
+#include <string.h> // Funciones de manejo de strings. Ej.: strrchr, strcat, strcmp.
 #include "resource.h" // Incluimos el archivo de recursos del ícono
-#include <commdlg.h>  // GetOpenFileName
-#include <string.h> // strrchr, strcat
+#include "pickDir.h"
+#include "cleanNclose.h"
 
 #define WM_TRAYICON (WM_USER + 1)
 #define ID_MENU_ITEM1 1
@@ -17,7 +19,7 @@
 
 char dirFondo1[MAX_PATH] = "";
 char dirFondo2[MAX_PATH] = "";
-char configFile[MAX_PATH] = ""; // Ruta al archivo de configuración
+char configFile[MAX_PATH] = ""; // Ruta al archivo de configuración .ini
 
 NOTIFYICONDATA nid;
 HANDLE hStopEvent; // Evento de Detención
@@ -25,8 +27,11 @@ HANDLE hThread; // hMenu
 HMENU hMenu;   // Menu
 HMENU subMenu; // subMenu
 
+// Esta función se usa para construir el string que contiene la ruta a la que debe estar el archivo de configuración .ini
+// En este caso, dicha ruta es la misma que el producto de este código fuente.
+// Al final se le añade manualmente el nombre del archivo y su extensión usando strcat(ruta, archivo.ini)
 void getExecutablePath(char* pathBuffer, size_t bufferSize) { // El tamaño del buffer siempre debe ser del tamaño del string
-    GetModuleFileName(NULL, pathBuffer, bufferSize);
+    GetModuleFileName(NULL, pathBuffer, bufferSize); 
     char* lastSlash = strrchr(pathBuffer, '\\');
     if (lastSlash) {
         *(lastSlash + 1) = '\0'; // Termina la cadena después de la última barra invertida
@@ -43,39 +48,21 @@ void saveConf() {
     }
 }
 
-// Función para abrir un cuadro de diálogo y seleccionar los archivos
-void pickDir(char* rutaSeleccionada) {
-    OPENFILENAME ofn; // Estructura para el cuadro de diálogo
-    char archivo[260] = ""; // Buffer para la ruta (260 caracteres)
-
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL; // Ventana Propietaria (NULL si no hay una)
-    ofn.lpstrFile = archivo; // Apunta al buffer para almacenar la ruta
-    ofn.nMaxFile = sizeof(archivo);
-    ofn.lpstrFilter = "Archivos de Imagen\0*.BMP;*.JPEG;*.JPG;*.PNG;*.GIF\0";
-    ofn.nFilterIndex = 1; // Índice del filtro predeterminado
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
-
-    if (GetOpenFileName(&ofn) == TRUE) {
-        strcpy(rutaSeleccionada, ofn.lpstrFile); // Copiar la ruta seleccionada
-    }
-}
-
 // Esta función carga los directorios desde el archivo .ini
-void loadConf(HWND hwnd) {
+char loadConf(HWND hwnd) {
+    int resultado;
     // Obtener la ruta del ejecutable
     getExecutablePath(configFile, sizeof(configFile));
-    strcat(configFile, "config.ini"); // Añadimos el nombre del archivo a la ruta del archivo .ini
+    strcat(configFile, "config.ini"); // Añadimos el nombre del archivo .ini a la ruta
 
     FILE* file = fopen(configFile, "r");
     
     if (!file) {
         // Si no se encuentra el archivo, pregunta al usuario las rutas
-        MessageBoxW(hwnd, L"Elige el fondo que tenías antes de ejecutar la aplicación.", L"Fondo Principal", MB_OK);
-        pickDir(dirFondo1);
-        MessageBoxW(hwnd, L"Ahora elige el fondo que se debe ver con el juego.", L"Fondo para Jugar", MB_OK);
-        pickDir(dirFondo2);
+        MessageBoxW(hwnd, L"Elige el fondo que tenías antes de ejecutar la aplicación.", L"Fondo Principal", MB_OK | MB_ICONQUESTION);
+        pickDirStandar(dirFondo1, hwnd, hMenu, hStopEvent, nid, hThread);
+        MessageBoxW(hwnd, L"Ahora elige el fondo que se debe ver con el juego.", L"Fondo para Jugar", MB_OK | MB_ICONQUESTION);
+        pickDirStandar(dirFondo2, hwnd, hMenu, hStopEvent, nid, hThread);
         saveConf(); // Guarda la configuración
         file = fopen(configFile, "r"); // Intenta reabrir el archivo y continuar con la carga
     }
@@ -89,19 +76,31 @@ void loadConf(HWND hwnd) {
 
     // Validamos las rutas cargadas
     if (GetFileAttributes(dirFondo1) == INVALID_FILE_ATTRIBUTES) {
+
         while (GetFileAttributes(dirFondo1) == INVALID_FILE_ATTRIBUTES) {
-            MessageBoxW(hwnd, L"El archivo debe ser válido y no estar corrupto.", L"Fondo Principal", MB_OK);
-            pickDir(dirFondo1);
+            MessageBoxW(hwnd, L"El archivo 1 debe ser válido y no estar corrupto.", L"Fondo Principal", MB_OK | MB_ICONINFORMATION);
+            resultado = pickDirStandar(dirFondo1, hwnd, hMenu, hStopEvent, nid, hThread);
+            if (resultado == 1) { 
+                cleanNclose(hwnd, hMenu, hStopEvent, nid, hThread);
+                //printf("Cerrando. . .\n");
+                return 'F';
+            }
         }
-        saveConf();
+        if (resultado != 1) { saveConf(); }
     }
     if (GetFileAttributes(dirFondo2) == INVALID_FILE_ATTRIBUTES) {
         while (GetFileAttributes(dirFondo2) == INVALID_FILE_ATTRIBUTES) {
-            MessageBoxW(hwnd, L"El archivo debe ser válido y no estar corrupto.", L"Fondo para Jugar", MB_OK);
-            pickDir(dirFondo2);
+            MessageBoxW(hwnd, L"El archivo 2 debe ser válido y no estar corrupto.", L"Fondo para Jugar", MB_OK | MB_ICONINFORMATION);
+            resultado = pickDirStandar(dirFondo2, hwnd, hMenu, hStopEvent, nid, hThread);
+            if (resultado == 1) { 
+                cleanNclose(hwnd, hMenu, hStopEvent, nid, hThread);
+                //printf("Cerrando. . .\n");
+                return 'F'; 
+            }
         }
-        saveConf();
+        if (resultado != 1) { saveConf(); }
     }
+    return 'T';
 }
 
 // Convierte rutas relativas MiPrograma/Fondos/1.png a rutas completas C:/directorio/a/MiPrograma/Fondos/1.png
@@ -126,30 +125,30 @@ void Menu() {
     AppendMenu(hMenu, MF_STRING, ID_MENU_ITEM2, "Cerrar BgChanger");
 }
 
-void deleteMenu() {
-    if (hMenu) {
-        DestroyMenu(hMenu);
-        DestroyMenu(hMenu);
-        hMenu = NULL;
-    }
-}
-
 void cambiarFondoPantalla(const char* rutaImagen) {
     static char fondoActual[MAX_PATH] = "";
 
     // Evitar llamadas innecesarias a SystemParametersInfo()
-    if (strcmp(fondoActual, rutaImagen) == 0) return; // Ya es el fondo actual
-
+    // strcmp() se utiliza para comparar 2 cadenas de caracteres. En este caso, se busca identificar si
+    //     ambas cadenas de caracteres son iguales para determinar si es la misma imagen.
+    if (strcmp(fondoActual, rutaImagen) == 0) return; // Si son iguales, la imagen seleccionada ya es el fondo actual.
+        
+        // Se obtienen los atributos del archivo. Si son inválidos, aparece un mensaje.
     if (GetFileAttributes(rutaImagen) == INVALID_FILE_ATTRIBUTES) {
         MessageBox(NULL, "La imagen no es accesible o no existe.", "Error", MB_OK | MB_ICONERROR);
         return;
     }
-
+    // Negación    ___ Función que permite el cambio del fondo de escitorio
+    //  |         |              __ Cambio de fondo   __ Parámetros adicionales
+    //  |         |             |                   |      __ Ruta de la Imagen
+    //  |         |             |                   |     |                      __ Guarda el cambio en configuración
+    //  |         |             |                   |     |                     |                   __ Notifica cambios al sistema
+    //  v         |             |                   |     |                     |                  |
     if (!SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, (PVOID)rutaImagen, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)) {
         // Se intenta cambiar el fondo de pantalla poniendo la llamada a la función como condición. Si no se cumple:
         MessageBox(NULL, "Error al cambiar el fondo de pantalla.", "Error", MB_OK | MB_ICONERROR);
     } else { // Si se cambia con éxito el fondo:
-        strcpy(fondoActual, rutaImagen);
+        strcpy(fondoActual, rutaImagen); // Guarda la ruta de la imagen actual como fondo actual.
     }
 }
 
@@ -197,20 +196,6 @@ void agregarIconoBandeja(HWND hwnd) {
     Shell_NotifyIcon(NIM_ADD, &nid); 
 }
 
-void eliminarIconoBandeja() {
-    Shell_NotifyIcon(NIM_DELETE, &nid);
-    DestroyIcon(nid.hIcon); // Liberar el ícono
-}
-
-void limpieza() {
-    eliminarIconoBandeja();
-    deleteMenu(); // Liberamos al menú
-    SetEvent(hStopEvent); // Notifica al hilo que debe terminar
-    WaitForSingleObject(hThread, INFINITE);
-    CloseHandle(hThread);
-    CloseHandle(hStopEvent);
-}
-
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_TRAYICON: // Aquí se programa cómo se muestran las opciones
@@ -231,29 +216,26 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         case WM_COMMAND: // Aquí se programan las acciones para cada opción
             switch (LOWORD(wParam)) {
                 case ID_MENU_ITEM1:
-                    MessageBox(hwnd, dirFondo1, "Fondo Principal", MB_OK);
-                    MessageBox(hwnd, dirFondo2, "Fondo para Jugar", MB_OK);
+                    MessageBox(hwnd, dirFondo1, "Fondo Principal", MB_OK | MB_ICONINFORMATION);
+                    MessageBox(hwnd, dirFondo2, "Fondo para Jugar", MB_OK | MB_ICONINFORMATION);
                     break;
                 case ID_MENU_SET_DIR1:
-                    pickDir(dirFondo1);
+                    pickDirStandar(dirFondo1, hwnd, hMenu, hStopEvent, nid, hThread);
                     saveConf();
                     loadConf(hwnd);
                     break;
                 case ID_MENU_SET_DIR2:
-                    pickDir(dirFondo2);
+                    pickDirStandar(dirFondo2, hwnd, hMenu, hStopEvent, nid, hThread);
                     saveConf();
                     loadConf(hwnd);
                     break;
                 case ID_MENU_ITEM2:
-                    MessageBoxW(hwnd, L"El cambiador de fondo se cerrará a continuación.", L"Se cerrará el programa", MB_OK);
-                    PostMessage(hwnd, WM_CLOSE, 0, 0);
-                    limpieza(hwnd, subMenu);
+                    cleanNclose(hwnd, hMenu, hStopEvent, nid, hThread);
                     break;
             }
             break;
         case WM_DESTROY:
-            PostQuitMessage(0);
-            limpieza(hwnd, subMenu);
+            cleanNclose(hwnd, hMenu, hStopEvent, nid, hThread);
             break;
         default:
             return DefWindowProc(hwnd, uMsg, wParam, lParam);
@@ -300,6 +282,12 @@ int main() {
     wc.hInstance = GetModuleHandle(NULL);
     wc.lpszClassName = "BackgroundChanger";
     
+    hStopEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (!hStopEvent) {
+        MessageBoxW(NULL, L"No se pudo crear el evento de detención", L"Error", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+
     RegisterClass(&wc);
     HWND hwnd = CreateWindow("BackgroundChanger", NULL, 0, 0, 0, 0, 0, NULL, NULL, GetModuleHandle(NULL), NULL);
     Menu(); // Permite ver el menú de opciones
@@ -311,19 +299,13 @@ int main() {
     }
 
     // Las cargamos 2 veces si no había archivo de configuración
-    loadConf(hwnd);
-    
-    hStopEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
-    if (!hStopEvent) {
-        MessageBoxW(NULL, L"No se pudo crear el evento de detención", L"Error", MB_OK | MB_ICONERROR);
-        return 1;
-    }
-
-    // Creamos un hilo para monitorear los procesos y cambiar el fondo
-    HANDLE hThread = CreateThread(NULL, 0, MonitorThread, NULL, 0, NULL);
-    if (hThread == NULL) {
-        MessageBox(NULL, "No se pudo crear el Hilo", "Error", MB_OK | MB_ICONERROR);
-        return 1;
+    if (loadConf(hwnd) == 'T') {
+        // Creamos un hilo para monitorear los procesos y cambiar el fondo
+        HANDLE hThread = CreateThread(NULL, 0, MonitorThread, NULL, 0, NULL);
+        if (hThread == NULL) {
+            MessageBox(NULL, "No se pudo crear el Hilo", "Error", MB_OK | MB_ICONERROR);
+            return 1;
+        }
     }
 
     // Bucle de mensajes
